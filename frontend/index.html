@@ -1,63 +1,317 @@
 <!doctype html>
 <html lang="es">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pronóstico</title>
-<!--
-  ESQUELETO DEL FRONTEND
-  ======================
-  Esta página ya funciona: pide el pronóstico a la API y lo muestra en una
-  tabla sin formato. Tu trabajo es convertirla en una interfaz de verdad.
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Panel de Pronóstico</title>
+  <!-- Importamos Chart.js desde CDN para la gráfica -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  
+  <style>
+    /* Estilos minimalistas y modernos (CSS puro) */
+    :root {
+      --primary: #2563eb;
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --danger: #ef4444;
+    }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    h1 { margin: 0; font-size: 1.75rem; color: var(--text); }
+    
+    /* Controles */
+    .controls {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+      background: var(--card-bg);
+      padding: 0.75rem 1.25rem;
+      border-radius: 0.5rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    input[type="number"] {
+      width: 70px;
+      padding: 0.5rem;
+      border: 1px solid #cbd5e1;
+      border-radius: 0.25rem;
+      font-size: 1rem;
+    }
+    button {
+      background-color: var(--primary);
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 0.25rem;
+      cursor: pointer;
+      font-weight: 500;
+      transition: background 0.2s;
+    }
+    button:hover { background-color: #1d4ed8; }
+    button:disabled { background-color: #94a3b8; cursor: not-allowed; }
 
-  Requisitos mínimos (ver README, Fase 2):
-    1. Una gráfica con el histórico, el pronóstico y el intervalo de confianza.
-    2. Las horas en hora de Colombia (la API las entrega en UTC, con "Z").
-    3. Al menos un indicador destacado (p.ej. valor de la próxima hora,
-       máximo esperado, hora del último dato).
-    4. Controles para elegir cuántas horas pronosticar.
-    5. Un mensaje claro cuando la API responde con error.
+    /* Tarjetas de Indicadores */
+    .indicators {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+    }
+    .card {
+      background: var(--card-bg);
+      padding: 1.5rem;
+      border-radius: 0.5rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .card h3 { margin: 0 0 0.5rem 0; font-size: 0.875rem; color: var(--text-muted); text-transform: uppercase; }
+    .card .value { font-size: 1.5rem; font-weight: 700; margin: 0; }
+    .card.warning { border-left: 4px solid #f59e0b; }
 
-  Puedes usar cualquier librería de gráficas cargada desde un CDN
-  (Chart.js, Plotly, ECharts...) y poner archivos .css o .js en esta misma
-  carpeta: se sirven en /static/<nombre>.
-
-  Endpoints disponibles (pruébalos en /docs):
-    GET /api/prediccion?horas=12&historia=48&confianza=0.95
-    GET /api/historico?horas=48
-    GET /api/modelo
-    GET /api/salud
--->
+    /* Gráfica y Errores */
+    .chart-container {
+      background: var(--card-bg);
+      padding: 1.5rem;
+      border-radius: 0.5rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      height: 450px;
+    }
+    #error-msg {
+      background: #fee2e2;
+      color: #991b1b;
+      padding: 1rem;
+      border-radius: 0.5rem;
+      margin-bottom: 1.5rem;
+      display: none;
+      border-left: 4px solid var(--danger);
+      font-weight: 500;
+    }
+  </style>
 </head>
 <body>
-  <h1>Pronóstico</h1>
-  <p id="estado">Consultando la API…</p>
-  <table border="1" cellpadding="4">
-    <thead><tr><th>tiempo (UTC)</th><th>prediccion</th><th>limite_inferior</th><th>limite_superior</th></tr></thead>
-    <tbody id="filas"></tbody>
-  </table>
+  
+  <header>
+    <h1>Pronóstico del Sensor</h1>
+    <!-- Requisito 4: Controles para elegir cuántas horas -->
+    <div class="controls">
+      <label for="input-horas">Horas a pronosticar:</label>
+      <input type="number" id="input-horas" value="12" min="1" max="72">
+      <button onclick="cargar()">Actualizar</button>
+    </div>
+  </header>
 
-<script>
-async function cargar() {
-  const estado = document.getElementById("estado");
-  try {
-    const respuesta = await fetch("/api/prediccion?horas=12&historia=48");
-    const datos = await respuesta.json();
-    if (!respuesta.ok) throw new Error(datos.detail);
+  <!-- Requisito 5: Mensaje claro cuando la API responde con error -->
+  <div id="error-msg"></div>
 
-    // datos.historico  -> [{tiempo, valor}, ...]            (horas pasadas)
-    // datos.prediccion -> [{tiempo, prediccion, limite_inferior, limite_superior}, ...]
-    console.log(datos);   // abre la consola del navegador (F12) para explorarlo
+  <!-- Requisito 3: Indicadores destacados -->
+  <div class="indicators">
+    <div class="card">
+      <h3>Último dato real</h3>
+      <p class="value" id="ind-ultima-obs">--</p>
+    </div>
+    <div class="card">
+      <h3>Próxima hora (Valor esperado)</h3>
+      <p class="value" id="ind-proxima">--</p>
+    </div>
+    <!-- Este indicador solo aparece si el sensor falló y la API rellenó datos -->
+    <div class="card" id="card-rellenadas" style="display: none;">
+      <h3>Aviso de calidad</h3>
+      <p class="value" style="color: #d97706; font-size: 1.1rem;" id="ind-rellenadas">--</p>
+    </div>
+  </div>
 
-    document.getElementById("filas").innerHTML = datos.prediccion.map(p =>
-      `<tr><td>${p.tiempo}</td><td>${p.prediccion}</td><td>${p.limite_inferior}</td><td>${p.limite_superior}</td></tr>`
-    ).join("");
-    estado.textContent = `Último dato real: ${datos.ultima_observacion}`;
-  } catch (error) {
-    estado.textContent = "Error: " + error.message;
-  }
-}
-cargar();
-</script>
+  <div class="chart-container">
+    <canvas id="grafica"></canvas>
+  </div>
+
+  <script>
+    let chartInstance = null;
+
+    // Requisito 2: Las horas en hora de Colombia (transforma el UTC "Z")
+    function formatearHoraColombia(fechaUTC) {
+      const fecha = new Date(fechaUTC);
+      return new Intl.DateTimeFormat('es-CO', {
+        timeZone: 'America/Bogota', // Fuerza zona horaria de Colombia
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      }).format(fecha);
+    }
+
+    async function cargar() {
+      const btn = document.querySelector('button');
+      const errorMsg = document.getElementById("error-msg");
+      const horas = document.getElementById("input-horas").value || 12;
+      
+      // Estado de carga
+      btn.textContent = "Cargando...";
+      btn.disabled = true;
+      errorMsg.style.display = "none";
+
+      try {
+        const respuesta = await fetch(`/api/prediccion?horas=${horas}&historia=48&confianza=0.95`);
+        const datos = await respuesta.json();
+        
+        if (!respuesta.ok) throw new Error(datos.detail || "Error desconocido en la API");
+
+        actualizarIndicadores(datos);
+        dibujarGrafica(datos);
+
+      } catch (error) {
+        errorMsg.textContent = `Error de conexión: ${error.message}`;
+        errorMsg.style.display = "block";
+      } finally {
+        btn.textContent = "Actualizar";
+        btn.disabled = false;
+      }
+    }
+
+    function actualizarIndicadores(datos) {
+      // Formateamos la última observación
+      document.getElementById("ind-ultima-obs").textContent = formatearHoraColombia(datos.ultima_observacion);
+      
+      // Mostramos la predicción inmediata de la hora siguiente
+      if (datos.prediccion && datos.prediccion.length > 0) {
+        document.getElementById("ind-proxima").textContent = datos.prediccion[0].prediccion.toFixed(2);
+      }
+
+      // Validamos si hubo horas rellenadas para mostrar advertencia
+      const cardRellenadas = document.getElementById("card-rellenadas");
+      if (datos.horas_rellenadas > 0) {
+        cardRellenadas.style.display = "block";
+        cardRellenadas.classList.add("warning");
+        document.getElementById("ind-rellenadas").textContent = `El sensor estuvo caído ${datos.horas_rellenadas}h.`;
+      } else {
+        cardRellenadas.style.display = "none";
+      }
+    }
+
+    // Requisito 1: Gráfica con histórico, pronóstico e intervalo de confianza
+    function dibujarGrafica(datos) {
+      const ctx = document.getElementById('grafica').getContext('2d');
+      
+      if (chartInstance) {
+        chartInstance.destroy();
+      }
+
+      const etiquetas = [];
+      const dataHistorico = [];
+      const dataPrediccion = [];
+      const dataInf = [];
+      const dataSup = [];
+
+      // Procesar datos históricos
+      datos.historico.forEach(d => {
+        etiquetas.push(formatearHoraColombia(d.tiempo));
+        dataHistorico.push(d.valor);
+        dataPrediccion.push(null);
+        dataInf.push(null);
+        dataSup.push(null);
+      });
+
+      // Punto de anclaje: para que la línea no se corte entre pasado y futuro,
+      // unimos el último punto real con el inicio de la predicción.
+      const indiceFinal = dataHistorico.length - 1;
+      const valorFinal = dataHistorico[indiceFinal];
+      
+      if(datos.prediccion.length > 0) {
+          dataPrediccion[indiceFinal] = valorFinal;
+          dataInf[indiceFinal] = valorFinal;
+          dataSup[indiceFinal] = valorFinal;
+      }
+
+      // Procesar predicciones e intervalos
+      datos.prediccion.forEach(d => {
+        etiquetas.push(formatearHoraColombia(d.tiempo));
+        dataHistorico.push(null);
+        dataPrediccion.push(d.prediccion);
+        dataInf.push(d.limite_inferior);
+        dataSup.push(d.limite_superior);
+      });
+
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: etiquetas,
+          datasets: [
+            {
+              label: 'Histórico Real',
+              data: dataHistorico,
+              borderColor: '#0f172a',
+              borderWidth: 2,
+              tension: 0.1,
+              pointRadius: 1
+            },
+            {
+              label: 'Pronóstico',
+              data: dataPrediccion,
+              borderColor: '#2563eb',
+              borderWidth: 2,
+              borderDash: [5, 5],
+              tension: 0.1,
+              pointRadius: 2
+            },
+            {
+              label: 'Límite Superior',
+              data: dataSup,
+              borderColor: 'transparent',
+              backgroundColor: 'rgba(37, 99, 235, 0.15)', // Sombra azul claro
+              fill: '+1', // Le dice a Chart.js que pinte desde aquí hasta el límite inferior
+              pointRadius: 0,
+              tension: 0.1
+            },
+            {
+              label: 'Límite Inferior',
+              data: dataInf,
+              borderColor: 'transparent',
+              backgroundColor: 'transparent',
+              fill: false,
+              pointRadius: 0,
+              tension: 0.1
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: {
+              labels: { 
+                // Ocultamos los límites en la leyenda para que se vea más limpio
+                filter: (item) => !item.text.includes('Límite') 
+              } 
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  return `${context.dataset.label}: ${context.raw !== null ? context.raw.toFixed(2) : ''}`;
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    // Ejecuta la petición inicial al cargar la página
+    cargar();
+  </script>
 </body>
 </html>
